@@ -264,9 +264,12 @@ router.delete('/:id/attachment/:attachmentId', authMiddleware, async (req, res) 
 // ======================
 // POST مشاركة مهمة مع مستخدم آخر
 // ======================
+// ======================
+// POST مشاركة مهمة مع مستخدم آخر - معدل
+// ======================
 router.post('/:id/share', authMiddleware, async (req, res) => {
   try {
-    const { userEmail } = req.body;
+    const { userEmail, senderName, senderEmail } = req.body; // 🔥 نستقبل البيانات الجديدة
     const User = require('../models/User');
 
     const userToShare = await User.findOne({ email: userEmail });
@@ -283,31 +286,32 @@ router.post('/:id/share', authMiddleware, async (req, res) => {
       todo.sharedWith.push(userToShare._id);
       await todo.save();
 
-      // إنشاء إشعار
+      // 🔥 إنشاء إشعار بالبيانات الكاملة
       const note = await Notification.create({
         user: userToShare._id,
-        title: `قام ${req.user.name || req.user.email} بمشاركة المهمة "${todo.title}" معك`,
+        sender: req.user.id, // 🔥 نضيف المرسل
+        senderName: senderName || req.user.name, // 🔥 نضيف اسم المرسل
+        senderEmail: senderEmail || req.user.email, // 🔥 نضيف ايميل المرسل
+        receiverEmail: userEmail,
+        title: `مهمة مشاركة: ${todo.title}`,
         todo: todo._id,
         read: false,
-        type: 'shared'
+        type: 'shared',
+        message: `قام ${senderName || req.user.name} بمشاركة المهمة "${todo.title}" معك` // 🔥 رسالة واضحة
       });
 
       // ✅ بث الإشعار للمستخدم المشارك معه
-      
-const io = req.app.get('io');
-if (io) {
-  // أضف اسم المرسل داخل الإشعار عشان الواجهة تعرضه
-  note.senderName = req.user?.name || req.user?.email || 'مستخدم';
-  io.to(userToShare._id.toString()).emit('newNotification', note);
-  console.log(`📤 Sent notification from ${note.senderName} to user ${userToShare._id}`);
-}
-
-      
+      const io = req.app.get('io');
+      if (io) {
+        // 🔥 الإشعار هيوصل بالبيانات الكاملة
+        io.to(userToShare._id.toString()).emit('newNotification', note);
+        console.log(`📤 Sent notification from ${note.senderName} to user ${userToShare._id}`);
+      }
 
       // ✅ بث تحديث للمستخدم الحالي
       emitToUser(req, 'todoUpdated', todo);
 
-      // إرسال بريد إلكتروني (اختياري)
+      // إرسال بريد إلكتروني (اختياري) - معدل
       if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
         try {
           const transporter = nodemailer.createTransporter({
@@ -328,7 +332,7 @@ if (io) {
                 <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
                   <h2 style="color: #10b981;">مهمة جديدة تمت مشاركتها معك 📋</h2>
                   <p>مرحباً <strong>${userToShare.name || userToShare.email}</strong>,</p>
-                  <p>قام <strong>${req.user.name || req.user.email}</strong> بمشاركة المهمة التالية معك:</p>
+                  <p>قام <strong>${senderName || req.user.name || req.user.email}</strong> بمشاركة المهمة التالية معك:</p>
                   <div style="background-color: #f9fafb; padding: 15px; border-left: 4px solid #10b981; margin: 20px 0;">
                     <h3 style="margin: 0; color: #1f2937;">${todo.title}</h3>
                     ${todo.notes ? `<p style="color: #6b7280; margin-top: 10px;">${todo.notes}</p>` : ''}
@@ -346,7 +350,11 @@ if (io) {
       }
     }
     
-    res.json(todo);
+    res.json({ 
+      success: true, 
+      message: 'Task shared successfully',
+      todo: todo 
+    });
   } catch (err) {
     console.error('Error sharing task:', err);
     res.status(500).json({ error: err.message });
